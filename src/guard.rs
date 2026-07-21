@@ -44,6 +44,8 @@
 //! }
 //! ```
 
+use std::collections::HashMap;
+use std::sync::{Arc, Mutex as StdMutex, OnceLock};
 use std::time::Duration;
 
 use sqlx::SqlitePool;
@@ -65,6 +67,17 @@ const FAIL_THRESHOLD: i64 = 4;
 const STALE_PROBE_SECS: i64 = 10 * 60;
 
 const HOUR_MS: i64 = 3600 * 1000;
+
+/// One async mutex per endpoint name, shared by every `EndpointGuard`
+/// instance in the process (instances are constructed cheaply all over, so
+/// the lock cannot live on the struct).
+fn endpoint_lock(endpoint: &str) -> Arc<tokio::sync::Mutex<()>> {
+    static LOCKS: OnceLock<StdMutex<HashMap<String, Arc<tokio::sync::Mutex<()>>>>> =
+        OnceLock::new();
+    let map = LOCKS.get_or_init(|| StdMutex::new(HashMap::new()));
+    let mut m = map.lock().expect("endpoint lock map poisoned");
+    m.entry(endpoint.to_string()).or_default().clone()
+}
 
 /// The guard's verdict for one request attempt.
 pub enum Permit {
@@ -132,6 +145,14 @@ impl EndpointGuard {
     /// request straight away. On `Permit::Denied` the caller must not send and
     /// should stop its run (the breaker is open or the budget is spent).
     pub async fn acquire(&self) -> anyhow::Result<Permit> {
+        // Serialize the read-decide-sleep-commit sequence per endpoint. It is
+        // not atomic against the shared row: two concurrent acquires could
+        // both read the same `last_request_at`, sleep identical pacing, and
+        // send simultaneously (or both claim the single half-open probe
+        // slot). The DB still coordinates across processes (server vs seed);
+        // this closes the race between tasks inside one process.
+        let lock = endpoint_lock(&self.endpoint);
+        let _serialized = lock.lock().await;
         let now = now_ms();
         let g = self.load(now).await?;
 

@@ -71,6 +71,9 @@ const HOME_SWEEP_INTERVAL_SECS: i64 = 15 * 60;
 const PRUNE_INTERVAL_SECS: i64 = 24 * 3600;
 const INTRADAY_RETENTION_DAYS: i64 = 14;
 const FETCH_LOG_RETENTION_DAYS: i64 = 30;
+/// ~13 months: one month past the fin_sid cookie's 12-month lifetime, so only
+/// sids that can no longer return are pruned.
+const WATCHLIST_STALE_DAYS: i64 = 396;
 
 /// Per-hour request ceiling for the Yahoo endpoint guard. Higher than Stooq's
 /// default 200: an intraday tick sweeps every viewed symbol, and a daily-close
@@ -1363,9 +1366,24 @@ async fn run_prune_if_due(
         .execute(pool)
         .await?
         .rows_affected();
+    // Watchlist sids whose newest row is >13 months old belong to expired
+    // cookies: fin_sid lives 12 months from mint and is never refreshed, and
+    // every added_at falls within that lifetime, so 13 months of silence means
+    // the sid can never come back. Without this, every visitor ever leaves 5
+    // starter rows behind forever.
+    let wl_cutoff = now - WATCHLIST_STALE_DAYS * 86_400 * 1000;
+    let sids = sqlx::query(
+        "DELETE FROM watchlist WHERE sid IN \
+           (SELECT sid FROM watchlist GROUP BY sid HAVING MAX(added_at) < ?)",
+    )
+    .bind(wl_cutoff)
+    .execute(pool)
+    .await?
+    .rows_affected();
 
     let dur = t0.elapsed().as_millis() as i64;
-    let detail = format!("{bars} intraday bars, {logs} fetch_log rows");
+    let detail =
+        format!("{bars} intraday bars, {logs} fetch_log rows, {sids} stale watchlist rows");
     tracing::info!("[scheduler] prune: removed {detail}");
     log_fetch(pool, "prune", "-", "ok", Some(&detail), Some((bars + logs) as i64), dur, now).await?;
 

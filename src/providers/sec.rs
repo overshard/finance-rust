@@ -885,8 +885,8 @@ fn parse_nport(xml: &[u8]) -> Result<PortfolioData> {
     // into its `issuerCat` / `invCountry` bucket as the parser closes it. A
     // missing bucket on a holding contributes to an `"Unknown"` slot, which
     // is dropped at the end.
-    let mut sector_acc: HashMap<&'static str, f64> = HashMap::new();
-    let mut country_acc: HashMap<&'static str, f64> = HashMap::new();
+    let mut sector_acc: HashMap<String, f64> = HashMap::new();
+    let mut country_acc: HashMap<String, f64> = HashMap::new();
 
     loop {
         match reader.read_event_into(&mut buf)? {
@@ -903,7 +903,7 @@ fn parse_nport(xml: &[u8]) -> Result<PortfolioData> {
                         let pct = h.pct.unwrap_or(0.0);
                         let sec = issuer_bucket(h.issuer_cat.as_deref());
                         let ctry = country_bucket(h.country.as_deref());
-                        *sector_acc.entry(sec).or_insert(0.0) += pct;
+                        *sector_acc.entry(sec.to_string()).or_insert(0.0) += pct;
                         *country_acc.entry(ctry).or_insert(0.0) += pct;
                         all.push(h.into_holding());
                     }
@@ -988,11 +988,10 @@ fn parse_nport(xml: &[u8]) -> Result<PortfolioData> {
     // hides itself in the route when only one bucket survives — that is the
     // pure-equity-ETF degenerate case where everything rolls up to "Corporate"
     // and the panel would be a single flat bar carrying no information.
-    let trim_and_sort = |acc: HashMap<&'static str, f64>| -> Vec<(String, f64)> {
+    let trim_and_sort = |acc: HashMap<String, f64>| -> Vec<(String, f64)> {
         let mut v: Vec<(String, f64)> = acc
             .into_iter()
             .filter(|(_, p)| *p >= 0.05)
-            .map(|(b, p)| (b.to_string(), p))
             .collect();
         v.sort_by(|a, b| b.1.total_cmp(&a.1));
         v
@@ -1026,8 +1025,8 @@ fn issuer_bucket(cat: Option<&str>) -> &'static str {
 /// the codes most commonly seen in US-listed ETF portfolios are spelled
 /// out; the long tail falls through to the raw code, which still reads
 /// usefully in the panel.
-fn country_bucket(code: Option<&str>) -> &'static str {
-    match code.unwrap_or("").to_ascii_uppercase().as_str() {
+fn country_bucket(code: Option<&str>) -> String {
+    let name = match code.unwrap_or("").to_ascii_uppercase().as_str() {
         "US" => "United States",
         "CA" => "Canada",
         "GB" => "United Kingdom",
@@ -1062,14 +1061,9 @@ fn country_bucket(code: Option<&str>) -> &'static str {
         "BM" => "Bermuda",
         "KY" => "Cayman Islands",
         "" => "Unknown",
-        other => {
-            // Heap-allocated codes can't be returned as `&'static str`, so a
-            // small static buffer trick: leak the code. Acceptable here —
-            // the long tail of ISO codes is small (~250) and per-app-run
-            // bounded; not in a hot path.
-            Box::leak(other.to_string().into_boxed_str())
-        }
-    }
+        other => return other.to_string(),
+    };
+    name.to_string()
 }
 
 // ── company leadership: officers & board from Form 3/4/5 (Phase 14) ────────

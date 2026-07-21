@@ -33,7 +33,14 @@ async fn favicon() -> Response {
 async fn robots() -> Response {
     let mut h = HeaderMap::new();
     h.insert(header::CONTENT_TYPE, "text/plain".parse().unwrap());
-    (StatusCode::OK, h, "User-agent: *\nAllow: /\n").into_response()
+    // Keep crawlers off the JSON API and the SSE stream: both are
+    // valueless to index and /stream holds a connection open per hit.
+    (
+        StatusCode::OK,
+        h,
+        "User-agent: *\nAllow: /\nDisallow: /api/\nDisallow: /stream\n",
+    )
+        .into_response()
 }
 
 async fn sitemap(State(state): State<AppState>) -> Response {
