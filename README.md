@@ -1,5 +1,11 @@
 # Finance
 
+> **Archived and no longer maintained.**
+> This is the Rust implementation, kept as a read-only snapshot. It was renamed from
+> `finance` to `finance-rust` when development moved on, and it receives no further
+> updates, fixes, or security patches. Use it as a reference, not as running software.
+
+
 A self-hosted, real-timeish market watcher for stocks, ETFs, indexes, and futures: live charts, key stats, fundamentals, and SEC filings. One axum binary with sqlx + SQLite, minijinja templates, and a Vite frontend.
 
 Single-operator, no auth, no accounts. It is for *watching* the market, not tracking holdings: there is no portfolio, no cost basis, no money in it at all.
